@@ -4,8 +4,8 @@
 node_modules
 
 # CDK asset staging directory
-.cdk.staging
-cdk.out
-*.yaml
-*.zip
-*.yml
+sedai-avlambda-cdk/.cdk.staging
+sedai-avlambda-cdk/cdk.out
+sedai-avlambda-cdk/*.yaml
+sedai-avlambda-cdk/*.zip
+sedai-avlambda-cdk/*.yml
