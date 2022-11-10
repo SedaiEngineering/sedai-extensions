@@ -102,6 +102,7 @@ export class CdkStack extends cdk.Stack {
             ],
             resources: [
               "arn:aws:dynamodb:us-east-1:*:table/SedaiResourceConcurrencyStats",
+              "arn:aws:dynamodb:us-east-1:*:table/SedaiTelemetryLogs",
             ],
           }),
           new iam.PolicyStatement({
@@ -128,6 +129,8 @@ export class CdkStack extends cdk.Stack {
         code: lambda.Code.fromAsset(path.join(__dirname, "/avlambda.zip")),
         environment: {
           DYNAMODB_TABLE: "SedaiResourceConcurrencyStats",
+          DYNAMODB_TELEMETRY_TABLE: "SedaiTelemetryLogs",
+          WARMUP_WAIT_SECONDS: "10"
         },
         role: IamRoleLambdaExecution,
       }
@@ -189,6 +192,25 @@ export class CdkStack extends cdk.Stack {
     (
       SedaiResourceConcurrencyStatsTable.node.defaultChild as dynamodb.CfnTable
     ).overrideLogicalId("SedaiResourceConcurrencyStatsTable");
+  
+    // SedaiTelemetryLogs
+    const SedaiTelemetryLogs = new dynamodb.Table(
+      this,
+      "SedaiTelemetryLogs",
+      {
+        tableName: "SedaiTelemetryLogs",
+        partitionKey: {
+          name: "requestId",
+          type: dynamodb.AttributeType.STRING,
+        },
+        billingMode: dynamodb.BillingMode.PROVISIONED,
+        readCapacity: 1,
+        writeCapacity: 1,
+      }
+    );
+    (
+      SedaiTelemetryLogs.node.defaultChild as dynamodb.CfnTable
+    ).overrideLogicalId("SedaiTelemetryLogs");
 
     // sedaiavlambdacontrolcenterDynamo
     const sedaiavlambdacontrolcenterDynamo = new iam.Role(
@@ -235,6 +257,12 @@ export class CdkStack extends cdk.Stack {
                 ":table/",
                 "SedaiResourceConcurrencyStatsTable",
               ]),
+              cdk.Fn.join("", [
+                "arn:aws:dynamodb:*:",
+                this.account,
+                ":table/",
+                "SedaiTelemetryLogs",
+              ]),
             ],
           }),
         ],
@@ -249,8 +277,13 @@ export class CdkStack extends cdk.Stack {
     sedaiavlambdacontrolcenterDynamo.node.addDependency(
       SedaiResourceConcurrencyStatsTable
     );
+    sedaiavlambdacontrolcenterDynamo.node.addDependency(
+      SedaiTelemetryLogs
+    );
 
     // -----------
+
+    // SedaiResourceConcurrencyStatsTable Scaling
 
     // sedaiavlambdacontrolcenterAutoScale
     const sedaiavlambdacontrolcenterAutoScale =
@@ -364,6 +397,123 @@ export class CdkStack extends cdk.Stack {
       sedaiavlambdacontrolcenterAutoscale
     );
 
+    // -----------
+
+    // SedaiTelemetryLogs Scaling
+
+    // sedaiavlambdaTelemetryLogsAutoScale
+    const sedaiavlambdaTelemetryLogsAutoScale =
+      new applicationautoscaling.ScalableTarget(
+        this,
+        "sedaiavlambdaTelemetryLogsAutoScale",
+        {
+          maxCapacity: 20,
+          minCapacity: 1,
+          resourceId: cdk.Fn.join("", [
+            "table/",
+            "SedaiTelemetryLogs",
+          ]),
+          scalableDimension: "dynamodb:table:ReadCapacityUnits",
+          serviceNamespace: applicationautoscaling.ServiceNamespace.DYNAMODB,
+          role: sedaiavlambdacontrolcenterDynamo,
+        }
+      );
+    (
+      sedaiavlambdaTelemetryLogsAutoScale.node
+        .defaultChild as applicationautoscaling.CfnScalableTarget
+    ).overrideLogicalId("sedaiavlambdaTelemetryLogsAutoScale");
+    sedaiavlambdaTelemetryLogsAutoScale.node.addDependency(
+      SedaiTelemetryLogs
+    );
+    sedaiavlambdaTelemetryLogsAutoScale.node.addDependency(
+      sedaiavlambdacontrolcenterDynamo
+    );
+
+    // sedaiavlambdaTelemetryLogsTable
+    const sedaiavlambdaTelemetryLogsTable =
+      new applicationautoscaling.TargetTrackingScalingPolicy(
+        this,
+        "sedaiavlambdaTelemetryLogsTable",
+        {
+          policyName: "sedaiavlambdaTelemetryLogsTable",
+          predefinedMetric:
+            applicationautoscaling.PredefinedMetric
+              .DYNAMODB_READ_CAPACITY_UTILIZATION,
+          scaleInCooldown: cdk.Duration.seconds(60),
+          scaleOutCooldown: cdk.Duration.seconds(60),
+          targetValue: 75,
+          scalingTarget: sedaiavlambdaTelemetryLogsAutoScale,
+        }
+      );
+    (
+      sedaiavlambdaTelemetryLogsTable.node
+        .defaultChild as applicationautoscaling.CfnScalingPolicy
+    ).overrideLogicalId("sedaiavlambdaTelemetryLogsTable");
+    sedaiavlambdaTelemetryLogsTable.node.addDependency(
+      SedaiTelemetryLogs
+    );
+    sedaiavlambdaTelemetryLogsTable.node.addDependency(
+      sedaiavlambdaTelemetryLogsAutoScale
+    );
+
+    // -----------
+
+    // sedaiavlambdaTelemetryLogsAutoscale
+    const sedaiavlambdaTelemetryLogsAutoscale =
+      new applicationautoscaling.ScalableTarget(
+        this,
+        "sedaiavlambdaTelemetryLogsAutoscale",
+        {
+          maxCapacity: 25,
+          minCapacity: 1,
+          resourceId: cdk.Fn.join("", [
+            "table/",
+            "SedaiTelemetryLogs",
+          ]),
+          scalableDimension: "dynamodb:table:WriteCapacityUnits",
+          serviceNamespace: applicationautoscaling.ServiceNamespace.DYNAMODB,
+          role: sedaiavlambdacontrolcenterDynamo,
+        }
+      );
+    (
+      sedaiavlambdaTelemetryLogsAutoscale.node
+        .defaultChild as applicationautoscaling.CfnScalableTarget
+    ).overrideLogicalId("sedaiavlambdaTelemetryLogsAutoscale");
+    sedaiavlambdaTelemetryLogsAutoscale.node.addDependency(
+      SedaiTelemetryLogs
+    );
+    sedaiavlambdaTelemetryLogsAutoscale.node.addDependency(
+      sedaiavlambdacontrolcenterDynamo
+    );
+
+    // sedaiavlambdaTelemetryLogstable
+    const sedaiavlambdaTelemetryLogstable =
+      new applicationautoscaling.TargetTrackingScalingPolicy(
+        this,
+        "sedaiavlambdaTelemetryLogstable",
+        {
+          policyName: "sedaiavlambdaTelemetryLogstable",
+          predefinedMetric:
+            applicationautoscaling.PredefinedMetric
+              .DYNAMODB_WRITE_CAPACITY_UTILIZATION,
+          scaleInCooldown: cdk.Duration.seconds(60),
+          scaleOutCooldown: cdk.Duration.seconds(60),
+          targetValue: 50,
+          scalingTarget: sedaiavlambdaTelemetryLogsAutoscale,
+        }
+      );
+    (
+      sedaiavlambdaTelemetryLogstable.node
+        .defaultChild as applicationautoscaling.CfnScalingPolicy
+    ).overrideLogicalId("sedaiavlambdaTelemetryLogstable");
+    sedaiavlambdaTelemetryLogstable.node.addDependency(
+      SedaiTelemetryLogs
+    );
+    sedaiavlambdaTelemetryLogstable.node.addDependency(
+      sedaiavlambdaTelemetryLogsAutoscale
+    );
+   
+    
     // Outputs
     new cdk.CfnOutput(this, "SedaiavlambdaLambdaFunctionQualifiedArn", {
       value: "SedaiavlambdaLambdaVersion",
